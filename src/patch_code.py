@@ -512,10 +512,13 @@ print("⚡ Removed blocking getRepoName() from autocomplete outcome.")
 
 
 # ===========================================================================
-# 11. Show status-bar spinner while Continue → LLM requests are active
+# 11. Show native Continue status-bar spinner while LLM requests are active
 #
-# Uses an in-flight counter because autocomplete requests can overlap briefly.
-# The spinner disappears only when the final active request finishes/aborts.
+# Continue already owns an autocomplete status-bar item and has native support
+# for its loading state. Reuse it instead of creating a second status-bar item.
+#
+# An in-flight counter prevents one overlapping request from clearing the
+# spinner while another request is still active.
 # ===========================================================================
 
 old = '''        console.log("🔌 [Continue TRANSPORT] /completions entered", {
@@ -542,26 +545,11 @@ new = '''        console.log("🔌 [Continue TRANSPORT] /completions entered", {
 
         // [CONTINUE-PATCH:AUTOCOMPLETE-STATUS]
         //
-        // Visible indication that an autocomplete request is currently
-        // talking to the LLM.
-        if (!globalThis.__continueAutocompleteStatusBar) {
-          globalThis.__continueAutocompleteStatusBar =
-            vscode11.window.createStatusBarItem(
-              vscode11.StatusBarAlignment.Right,
-              100
-            );
-        }
-
+        // Reuse Continue's native autocomplete status-bar item.
         globalThis.__continueAutocompleteActiveRequests =
           (globalThis.__continueAutocompleteActiveRequests ?? 0) + 1;
 
-        const autocompleteStatusBar =
-          globalThis.__continueAutocompleteStatusBar;
-
-        autocompleteStatusBar.text = "$(loading~spin) Continue";
-        autocompleteStatusBar.tooltip =
-          `Autocomplete request in progress\\nModel: ${options?.model ?? "unknown"}`;
-        autocompleteStatusBar.show();
+        setupStatusBar(void 0, true);
 
         let autocompleteStatusRequestClosed = false;
 
@@ -578,7 +566,7 @@ new = '''        console.log("🔌 [Continue TRANSPORT] /completions entered", {
           );
 
           if (globalThis.__continueAutocompleteActiveRequests === 0) {
-            autocompleteStatusBar.hide();
+            stopStatusBarLoading();
           }
         };
 
@@ -595,10 +583,10 @@ new = '''        console.log("🔌 [Continue TRANSPORT] /completions entered", {
 replace_once(
     old,
     new,
-    "autocomplete status-bar spinner"
+    "native autocomplete status-bar spinner"
 )
 
-print("⏳ Added Continue → LLM status-bar spinner.")
+print("⏳ Connected LLM requests to Continue's native status-bar spinner.")
 
 
 # ===========================================================================
