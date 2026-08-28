@@ -1,0 +1,39 @@
+name: LLM Autocomplete
+version: 1.0.0
+schema: v1
+
+models:
+- name: Autocomplete
+  provider: openai
+  model: Qwen/Qwen3-VL-235B-A22B-Thinking
+  # model: Qwen/Qwen3.6-35B-A3B
+  # model: Qwen/Qwen3.8-27B
+  # model: moonshotai/Kimi-K2.7-Code
+  # model: deepseek-ai/DeepSeek-V4-Flash-0731
+  apiBase: https://inference.example.com/
+  apiKey: ${{ secrets.API_KEY }}
+  roles:
+    - autocomplete
+
+  # For Kimi and Qwen:
+  promptTemplates:
+    autocomplete: |
+      <|fim_prefix|>{{{prefix}}}<|fim_suffix|>{{{suffix}}}<|fim_middle|>
+
+  # For DeepSeek:
+  # promptTemplates:
+  #   autocomplete: |
+  #     <｜fim▁begin｜>{{{prefix}}}<｜fim▁hole｜>{{{suffix}}}<｜fim▁end｜>
+
+  autocompleteOptions:
+    disable: false
+    debounceDelay: 250
+    modelTimeout: 1500
+    maxPromptTokens: 8192
+    maxCompletionTokens: 1024
+    useCache: false
+    useImports: false
+    useRecentlyEdited: true
+    useRecentlyOpened: false
+    experimental_includeRecentlyVisitedRanges: false
+    experimental_includeRecentlyEditedRanges: true

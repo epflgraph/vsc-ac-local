@@ -1,0 +1,10 @@
+supported_version: "2.0.0"
+
+extension_path: "~/.vscode/extensions/continue.continue-2.0.0-darwin-arm64/out/extension.js"
+
+verify_SHA256: true
+
+expected_SHA256:
+  original: a52b062dd346a4fd07da7574a3d3cd64f59a56bbd38515f53165ca41dc6a162f
+  patched_logs: 82344e0a5c548da8df0f2f0cf4e858208b155c6daa426d588a38407e5201138e
+  patched_full: e538270f1e68b23cd8ab92f3cbd774e20844207d988b3ad88ef8745324f413a0
