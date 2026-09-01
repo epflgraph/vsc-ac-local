@@ -136,7 +136,49 @@ experimental_includeRecentlyEditedRanges: true
 
 Also make sure the model uses the correct Fill-In-the-Middle (FIM) template. Qwen/Kimi and DeepSeek-style models may require different FIM tokens.
 
-If autocomplete works well at this point, **no patch is necessary**.
+### Useful keybindings
+
+#### **Manually triggering autocomplete:**
+
+Continue does not always trigger an inline autocomplete suggestion when expected. This can be inconvenient when the cursor is already at the desired location but no completion request is started.
+
+VS Code provides a command for explicitly triggering an inline suggestion. A convenient shortcut can be added to the user `keybindings.json`:
+
+```json
+{
+    "key": "cmd+shift+t",
+    "command": "editor.action.inlineSuggest.trigger",
+    "when": "editorTextFocus && !editorReadonly"
+}
+```
+
+With this binding, `Cmd+Shift+T` explicitly asks VS Code to trigger an inline suggestion at the current cursor position.
+
+You can find the keybindings file as follows:
+
+```shell
+find ~ -name 'keybindings.json' -print 2>/dev/null
+```
+
+#### **Reliably accepting autocomplete with `Tab`:**
+
+GitHub Copilot established `Tab` as the familiar default key for accepting inline autocomplete suggestions in VS Code. With Continue, however, pressing `Tab` does not always accept the displayed completion consistently.
+
+This can be made more reliable by explicitly binding `Tab` to VS Code's inline-suggestion commit command whenever an inline suggestion is visible:
+
+```json
+{
+    "key": "tab",
+    "command": "editor.action.inlineSuggest.commit",
+    "when": "inlineSuggestionVisible && editorTextFocus && !editorReadonly"
+}
+```
+
+The `inlineSuggestionVisible` condition is important: when no inline suggestion is displayed, `Tab` retains its normal editor behavior.
+
+### Generating Git commit messages with a local model
+
+Unlike GitHub Copilot, `Continue` does not include a functionity for generating commit messages on Git using local models. For this, you can use the `Commit Sage` VS Code extension.
 
 ## 2. Add diagnostic logging [optional]
 
