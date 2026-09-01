@@ -25,10 +25,7 @@ code ~/.continue/config.yaml
 ```
 
 An example configuration is provided at:
-
-```text
-config/config_continue_example.yaml
-```
+[config/config_continue_example.yaml](config/config_continue_example.yaml)
 
 It currently looks roughly like:
 
