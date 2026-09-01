@@ -40,8 +40,8 @@ schema: v1
 models:
 - name: Autocomplete
   provider: openai
-  model: Qwen/Qwen3-VL-235B-A22B-Thinking
-  apiBase: https://inference.example.com/
+  model: <model-name>
+  apiBase: <inference-url>
   apiKey: ${{ secrets.API_KEY }}
 
   roles:
