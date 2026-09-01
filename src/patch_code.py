@@ -13,6 +13,10 @@ LATE_CANCEL_MARKER = "// [CONTINUE-PATCH:LATE-CANCEL-GRACE] applied"
 COMPLETION_GUARD_MARKER = "// [CONTINUE-PATCH:COMPLETION-MATCH-GUARD] applied"
 NO_REPO_WAIT_MARKER = "// [CONTINUE-PATCH:AUTOCOMPLETE-NO-REPO-WAIT] applied"
 AUTOCOMPLETE_STATUS_MARKER = "// [CONTINUE-PATCH:AUTOCOMPLETE-STATUS] applied"
+DUPLICATE_COMMENT_MARKER = "// [CONTINUE-PATCH:DUPLICATE-COMMENT-PREFIX] applied"
+NEXT_EDIT_CHAIN_MARKER = "// [CONTINUE-PATCH:NEXT-EDIT-CHAIN] applied"
+COMMENT_FIRST_SENTENCE_MARKER = "// [CONTINUE-PATCH:COMMENT-FIRST-SENTENCE] applied"
+SUPPRESS_AFTER_ACCEPT_MARKER = "// [CONTINUE-PATCH:SUPPRESS-AFTER-ACCEPT] applied"
 
 
 def replace_once(old, new, label):
@@ -178,7 +182,7 @@ print("🛡️ Added stale-after-helper guard.")
 
 
 # ===========================================================================
-# 4. Safely strip <COMPLETION>...</COMPLETION>
+# 4a. Safely strip <COMPLETION>...</COMPLETION>
 # ===========================================================================
 
 old = '''            completion = processedCompletion;
@@ -221,6 +225,248 @@ replace_once(
 
 print("🛡️ Added completion.match() guard.")
 print("✂️ Added <COMPLETION> wrapper cleanup.")
+
+
+# ===========================================================================
+# 4b. Remove duplicated comment prefix
+# ===========================================================================
+
+old = '''          if (!completion) {
+            return void 0;
+          }
+          const outcome = {'''
+
+new = '''          if (!completion) {
+            return void 0;
+          }
+
+          // [CONTINUE-PATCH:DUPLICATE-COMMENT-PREFIX]
+          //
+          // If the existing text before the cursor already ends with "#"
+          // and the generated completion starts with another "#", remove
+          // the generated duplicate while preserving spacing.
+          if (
+            /#[ \\t]*$/.test(prefix) &&
+            /^[ \\t]*#[ \\t]*(?=\\S)/.test(completion)
+          ) {
+            const prefixAlreadyHasSpace = /#[ \\t]+$/.test(prefix);
+
+            completion = completion.replace(
+              /^[ \\t]*#[ \\t]*/,
+              prefixAlreadyHasSpace ? "" : " "
+            );
+
+            console.log(
+              "✂️ [Continue OP] Removed duplicate comment prefix"
+            );
+          }
+
+          if (!completion) {
+            return void 0;
+          }
+
+          const outcome = {'''
+
+replace_once(
+    old,
+    new,
+    "duplicate comment-prefix cleanup"
+)
+
+print("✂️ Added duplicate comment-prefix cleanup.")
+
+
+# ===========================================================================
+# 4c. Truncate comment autocomplete after first complete sentence
+# ===========================================================================
+
+old = '''            console.log(
+              "✂️ [Continue OP] Removed duplicate comment prefix"
+            );
+          }
+
+          if (!completion) {
+            return void 0;
+          }
+
+          const outcome = {'''
+
+new = '''            console.log(
+              "✂️ [Continue OP] Removed duplicate comment prefix"
+            );
+          }
+
+          if (!completion) {
+            return void 0;
+          }
+
+          // [CONTINUE-PATCH:COMMENT-FIRST-SENTENCE]
+          //
+          // When completing a comment, keep only the first complete sentence.
+          if (/#[^\\\\n]*$/.test(prefix)) {
+            const sentenceEnd = completion.search(/\\.(?=\\s|$)/);
+
+            if (sentenceEnd !== -1) {
+              completion = completion.slice(0, sentenceEnd + 1);
+
+              console.log(
+                "✂️ [Continue OP] Truncated comment after first sentence"
+              );
+            }
+          }
+
+          if (!completion) {
+            return void 0;
+          }
+
+          const outcome = {'''
+
+replace_once(
+    old,
+    new,
+    "comment first-sentence truncation"
+)
+
+print("💬 Added comment first-sentence truncation.")
+
+
+# ===========================================================================
+# 4d. Suppress autocomplete immediately after accepting an inline completion
+#
+# Continue's normal autocomplete acceptance callback runs after the completion
+# has already been inserted, which is too late to prevent VS Code from asking
+# the provider for another completion.
+#
+# A custom command therefore arms suppression BEFORE invoking VS Code's
+# inline-suggestion commit command.
+# ===========================================================================
+
+old = '''        const enableTabAutocomplete = getStatusBarStatus() === 1 /* Enabled */;'''
+
+new = '''        // [CONTINUE-PATCH:SUPPRESS-AFTER-ACCEPT]
+        //
+        // The custom Tab-accept command records the document version before
+        // inserting the inline completion. The accepted insertion normally
+        // increments that version once. Suppress only the resulting automatic
+        // invocation for that document state.
+        const suppressAfterAccept =
+          globalThis.__continueSuppressAutocompleteAfterAccept;
+
+        if (suppressAfterAccept) {
+          const isAutomatic =
+            context2.triggerKind !==
+            vscode11.InlineCompletionTriggerKind.Invoke;
+
+          const sameDocument =
+            document2.uri.toString() ===
+            suppressAfterAccept.document;
+
+          const isAcceptedInsertion =
+            document2.version ===
+            suppressAfterAccept.versionBeforeAccept + 1;
+
+          if (
+            isAutomatic &&
+            sameDocument &&
+            isAcceptedInsertion
+          ) {
+            globalThis.__continueSuppressAutocompleteAfterAccept =
+              void 0;
+
+            console.log(
+              "🛑 [Continue OP] Suppressed automatic invocation after acceptance",
+              {
+                versionBeforeAccept:
+                  suppressAfterAccept.versionBeforeAccept,
+                currentVersion:
+                  document2.version
+              }
+            );
+
+            return null;
+          }
+
+          // Do not let stale suppression state affect a later real edit,
+          // another document, or an explicitly triggered completion.
+          if (
+            !sameDocument ||
+            document2.version >
+              suppressAfterAccept.versionBeforeAccept + 1 ||
+            context2.triggerKind ===
+              vscode11.InlineCompletionTriggerKind.Invoke
+          ) {
+            globalThis.__continueSuppressAutocompleteAfterAccept =
+              void 0;
+          }
+        }
+
+        const enableTabAutocomplete = getStatusBarStatus() === 1 /* Enabled */;'''
+
+replace_once(
+    old,
+    new,
+    "post-accept provider suppression"
+)
+
+print("🛑 Added post-accept provider suppression.")
+
+
+# ---------------------------------------------------------------------------
+# Custom acceptance command
+#
+# This is called by the Tab keybinding. It records the editor state before
+# committing the inline suggestion.
+# ---------------------------------------------------------------------------
+
+old = '''        "continue.forceAutocomplete": async () => {
+          await vscode14.commands.executeCommand("editor.action.inlineSuggest.hide");
+          await vscode14.commands.executeCommand(
+            "editor.action.inlineSuggest.trigger"
+          );
+        },'''
+
+new = '''        "continue.acceptAutocompleteWithoutRetrigger": async () => {
+          const activeEditor =
+            vscode14.window.activeTextEditor;
+
+          if (activeEditor) {
+            globalThis.__continueSuppressAutocompleteAfterAccept = {
+              document:
+                activeEditor.document.uri.toString(),
+              versionBeforeAccept:
+                activeEditor.document.version
+            };
+
+            console.log(
+              "🛑 [Continue OP] Armed autocomplete suppression before acceptance",
+              {
+                document:
+                  activeEditor.document.uri.toString(),
+                versionBeforeAccept:
+                  activeEditor.document.version
+              }
+            );
+          }
+
+          await vscode14.commands.executeCommand(
+            "editor.action.inlineSuggest.commit"
+          );
+        },
+
+        "continue.forceAutocomplete": async () => {
+          await vscode14.commands.executeCommand("editor.action.inlineSuggest.hide");
+          await vscode14.commands.executeCommand(
+            "editor.action.inlineSuggest.trigger"
+          );
+        },'''
+
+replace_once(
+    old,
+    new,
+    "custom autocomplete acceptance command"
+)
+
+print("⌨️ Added custom Tab-accept command.")
 
 
 # ===========================================================================
@@ -291,7 +537,7 @@ print("🛡️ Added defensive document.lineAt() bounds guards.")
 
 
 # ===========================================================================
-# 6. Abort the actual model transport when autocomplete is cancelled
+# 6. Abort actual model transport when autocomplete is cancelled
 # ===========================================================================
 
 full_stop_anchor = '''        const fullStop = () => this.generatorReuseManager.currentGenerator?.cancel();'''
@@ -513,12 +759,6 @@ print("⚡ Removed blocking getRepoName() from autocomplete outcome.")
 
 # ===========================================================================
 # 11. Show native Continue status-bar spinner while LLM requests are active
-#
-# Continue already owns an autocomplete status-bar item and has native support
-# for its loading state. Reuse it instead of creating a second status-bar item.
-#
-# An in-flight counter prevents one overlapping request from clearing the
-# spinner while another request is still active.
 # ===========================================================================
 
 old = '''        console.log("🔌 [Continue TRANSPORT] /completions entered", {
@@ -591,10 +831,6 @@ print("⏳ Connected LLM requests to Continue's native status-bar spinner.")
 
 # ===========================================================================
 # 12. Hide status-bar spinner when transport finishes
-#
-# This uses the actual finally block emitted by patch_logs.sh.
-# Abort cleanup is also handled safely because closeAutocompleteStatusRequest()
-# is idempotent.
 # ===========================================================================
 
 old = '''          if (signal) {
@@ -628,6 +864,35 @@ print("⏳ Added status-bar cleanup after completed requests.")
 
 
 # ===========================================================================
+# 13. Prevent ordinary autocomplete from creating Next Edit chains
+# ===========================================================================
+
+old = '''          } else {
+            this.nextEditProvider.startChain();
+            const input = {'''
+
+new = '''          } else {
+            // [CONTINUE-PATCH:NEXT-EDIT-CHAIN]
+            //
+            // Ordinary autocomplete must not create a Next Edit chain.
+            // Otherwise a cancelled autocomplete leaves a stale chain that
+            // causes the following invocation to be swallowed.
+            if (this.isNextEditActive) {
+              this.nextEditProvider.startChain();
+            }
+
+            const input = {'''
+
+replace_once(
+    old,
+    new,
+    "Next Edit chain creation guard"
+)
+
+print("🔗 Guarded Next Edit chain creation.")
+
+
+# ===========================================================================
 # Markers
 # ===========================================================================
 
@@ -640,13 +905,17 @@ for marker in (
     COMPLETION_GUARD_MARKER,
     NO_REPO_WAIT_MARKER,
     AUTOCOMPLETE_STATUS_MARKER,
+    DUPLICATE_COMMENT_MARKER,
+    NEXT_EDIT_CHAIN_MARKER,
+    COMMENT_FIRST_SENTENCE_MARKER,
+    SUPPRESS_AFTER_ACCEPT_MARKER,
 ):
     if marker not in s:
         s += marker + "\n"
 
 
 # ===========================================================================
-# Write temporary patched JavaScript
+# Write patched JavaScript
 # ===========================================================================
 
 path.write_text(s)
@@ -660,8 +929,13 @@ print("  🚫 stale invocation dropped after debounce")
 print("  🚫 stale invocation dropped after HelperVars construction")
 print("  🛡️ completion.match() protected against undefined")
 print("  ✂️ <COMPLETION> wrapper cleanup")
+print("  ✂️ duplicate comment prefix removed")
+print("  💬 comments truncated after first sentence")
 print("  🛡️ defensive document.lineAt() bounds checks")
 print("  🧨 cancellation aborts underlying model transport")
 print("  🕊️ conservative late-cancellation grace")
 print("  ⚡ autocomplete does not wait for getRepoName()")
 print("  ⏳ status-bar spinner during Continue → LLM requests")
+print("  🔗 ordinary autocomplete does not create Next Edit chains")
+print("  ⌨️ custom Tab-accept command installed")
+print("  🛑 automatic autocomplete suppressed after Tab acceptance")
