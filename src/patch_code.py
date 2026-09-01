@@ -17,6 +17,7 @@ DUPLICATE_COMMENT_MARKER = "// [CONTINUE-PATCH:DUPLICATE-COMMENT-PREFIX] applied
 NEXT_EDIT_CHAIN_MARKER = "// [CONTINUE-PATCH:NEXT-EDIT-CHAIN] applied"
 COMMENT_FIRST_SENTENCE_MARKER = "// [CONTINUE-PATCH:COMMENT-FIRST-SENTENCE] applied"
 SUPPRESS_AFTER_ACCEPT_MARKER = "// [CONTINUE-PATCH:SUPPRESS-AFTER-ACCEPT] applied"
+SUPPRESS_AFTER_SAVE_MARKER = "// [CONTINUE-PATCH:SUPPRESS-AFTER-SAVE] applied"
 
 
 def replace_once(old, new, label):
@@ -331,14 +332,7 @@ print("💬 Added comment first-sentence truncation.")
 
 
 # ===========================================================================
-# 4d. Suppress autocomplete immediately after accepting an inline completion
-#
-# Continue's normal autocomplete acceptance callback runs after the completion
-# has already been inserted, which is too late to prevent VS Code from asking
-# the provider for another completion.
-#
-# A custom command therefore arms suppression BEFORE invoking VS Code's
-# inline-suggestion commit command.
+# 4d. Suppress automatic autocomplete after acceptance or save
 # ===========================================================================
 
 old = '''        const enableTabAutocomplete = getStatusBarStatus() === 1 /* Enabled */;'''
@@ -386,8 +380,6 @@ new = '''        // [CONTINUE-PATCH:SUPPRESS-AFTER-ACCEPT]
             return null;
           }
 
-          // Do not let stale suppression state affect a later real edit,
-          // another document, or an explicitly triggered completion.
           if (
             !sameDocument ||
             document2.version >
@@ -400,18 +392,76 @@ new = '''        // [CONTINUE-PATCH:SUPPRESS-AFTER-ACCEPT]
           }
         }
 
+        // [CONTINUE-PATCH:SUPPRESS-AFTER-SAVE]
+        //
+        // onWillSaveTextDocument records the exact document/version before
+        // VS Code performs the save. A save does not normally change the
+        // document version, so suppress only an automatic invocation for that
+        // same document/version.
+        const suppressAfterSave =
+          globalThis.__continueSuppressAutocompleteAfterSave;
+
+        if (suppressAfterSave) {
+          const isAutomatic =
+            context2.triggerKind !==
+            vscode11.InlineCompletionTriggerKind.Invoke;
+
+          const sameDocument =
+            document2.uri.toString() ===
+            suppressAfterSave.document;
+
+          const sameVersion =
+            document2.version ===
+            suppressAfterSave.version;
+
+          if (
+            isAutomatic &&
+            sameDocument &&
+            sameVersion
+          ) {
+            globalThis.__continueSuppressAutocompleteAfterSave =
+              void 0;
+
+            console.log(
+              "🛑 [Continue OP] Suppressed automatic invocation after save",
+              {
+                document:
+                  document2.uri.toString(),
+                documentVersion:
+                  document2.version
+              }
+            );
+
+            return null;
+          }
+
+          // If anything changed after the save, this state is stale and must
+          // not suppress a genuine later edit or manual invocation.
+          if (
+            !sameDocument ||
+            !sameVersion ||
+            context2.triggerKind ===
+              vscode11.InlineCompletionTriggerKind.Invoke
+          ) {
+            globalThis.__continueSuppressAutocompleteAfterSave =
+              void 0;
+          }
+        }
+
         const enableTabAutocomplete = getStatusBarStatus() === 1 /* Enabled */;'''
 
 replace_once(
     old,
     new,
-    "post-accept provider suppression"
+    "post-accept and post-save provider suppression"
 )
 
 print("🛑 Added post-accept provider suppression.")
+print("💾 Added post-save provider suppression.")
 
 
-# ---------------------------------------------------------------------------
+
+
 # Custom acceptance command
 #
 # This is called by the Tab keybinding. It records the editor state before
@@ -453,6 +503,30 @@ new = '''        "continue.acceptAutocompleteWithoutRetrigger": async () => {
           );
         },
 
+        "continue.saveWithoutAutocomplete": async () => {
+          const activeEditor =
+            vscode14.window.activeTextEditor;
+
+          if (activeEditor) {
+            globalThis.__continueSuppressAutocompleteAfterSave = {
+              document:
+                activeEditor.document.uri.toString()
+            };
+
+            console.log(
+              "🛑 [Continue OP] Armed autocomplete suppression before save",
+              {
+                document:
+                  activeEditor.document.uri.toString()
+              }
+            );
+          }
+
+          await vscode14.commands.executeCommand(
+            "workbench.action.files.save"
+          );
+        },
+
         "continue.forceAutocomplete": async () => {
           await vscode14.commands.executeCommand("editor.action.inlineSuggest.hide");
           await vscode14.commands.executeCommand(
@@ -463,10 +537,11 @@ new = '''        "continue.acceptAutocompleteWithoutRetrigger": async () => {
 replace_once(
     old,
     new,
-    "custom autocomplete acceptance command"
+    "custom autocomplete acceptance and save commands"
 )
 
 print("⌨️ Added custom Tab-accept command.")
+print("💾 Added custom save-without-autocomplete command.")
 
 
 # ===========================================================================
@@ -891,6 +966,59 @@ replace_once(
 
 print("🔗 Guarded Next Edit chain creation.")
 
+# ===========================================================================
+# 14. Arm one-shot autocomplete suppression before a document is saved
+#
+# This observes VS Code's normal save lifecycle. Cmd+S is not overridden.
+# It also works for saves initiated through menus or other VS Code commands.
+# ===========================================================================
+
+old = '''        context2.subscriptions.push(
+          vscode41.languages.registerInlineCompletionItemProvider(
+            [{ pattern: "**" }],
+            this.completionProvider
+          )
+        );
+        this.uriHandler.event((uri) => {'''
+
+new = '''        context2.subscriptions.push(
+          vscode41.languages.registerInlineCompletionItemProvider(
+            [{ pattern: "**" }],
+            this.completionProvider
+          )
+        );
+
+        // [CONTINUE-PATCH:SUPPRESS-AFTER-SAVE]
+        context2.subscriptions.push(
+          vscode41.workspace.onWillSaveTextDocument((event) => {
+            globalThis.__continueSuppressAutocompleteAfterSave = {
+              document:
+                event.document.uri.toString(),
+              version:
+                event.document.version
+            };
+
+            console.log(
+              "🛑 [Continue OP] Armed autocomplete suppression before save",
+              {
+                document:
+                  event.document.uri.toString(),
+                documentVersion:
+                  event.document.version
+              }
+            );
+          })
+        );
+
+        this.uriHandler.event((uri) => {'''
+
+replace_once(
+    old,
+    new,
+    "save autocomplete suppression listener"
+)
+
+print("💾 Added save-event autocomplete suppression listener.")
 
 # ===========================================================================
 # Markers
@@ -909,6 +1037,7 @@ for marker in (
     NEXT_EDIT_CHAIN_MARKER,
     COMMENT_FIRST_SENTENCE_MARKER,
     SUPPRESS_AFTER_ACCEPT_MARKER,
+    SUPPRESS_AFTER_SAVE_MARKER,
 ):
     if marker not in s:
         s += marker + "\n"
@@ -939,3 +1068,4 @@ print("  ⏳ status-bar spinner during Continue → LLM requests")
 print("  🔗 ordinary autocomplete does not create Next Edit chains")
 print("  ⌨️ custom Tab-accept command installed")
 print("  🛑 automatic autocomplete suppressed after Tab acceptance")
+print("  💾 automatic autocomplete suppressed after file save")
